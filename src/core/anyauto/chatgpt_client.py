@@ -646,9 +646,12 @@ class ChatGPTClient:
                 self._log(f"验证成功 {describe_flow_state(next_state)}")
                 return (True, next_state) if return_state else (True, "验证成功")
             else:
-                error_msg = r.text[:200]
+                try:
+                    error_msg = r.text[:200]
+                except Exception:
+                    error_msg = ""
                 self._log(f"验证失败: {r.status_code} - {error_msg}")
-                return False, f"HTTP {r.status_code}"
+                return False, f"HTTP {r.status_code}: {error_msg}".strip()
                 
         except Exception as e:
             self._log(f"验证异常: {e}")
@@ -827,12 +830,39 @@ class ChatGPTClient:
                 if not otp_code:
                     return False, "未收到验证码"
 
-                success, next_state = self.verify_email_otp(otp_code, return_state=True)
-                if not success:
-                    return False, f"验证码失败: {next_state}"
-                otp_verified = True
-                state = next_state
-                self.last_registration_state = state
+                tried_codes = {otp_code}
+                for _ in range(3):
+                    success, next_state = self.verify_email_otp(otp_code, return_state=True)
+                    if success:
+                        otp_verified = True
+                        state = next_state
+                        self.last_registration_state = state
+                        break
+
+                    err_text = str(next_state or "")
+                    is_wrong_code = any(
+                        marker in err_text.lower()
+                        for marker in (
+                            "wrong_email_otp_code",
+                            "wrong code",
+                            "http 401",
+                        )
+                    )
+                    if not is_wrong_code:
+                        return False, f"验证码失败: {next_state}"
+
+                    self._log("验证码疑似过期/错误，尝试获取新验证码...")
+                    otp_code = skymail_client.wait_for_verification_code(
+                        email,
+                        timeout=45,
+                        exclude_codes=tried_codes,
+                    )
+                    if not otp_code:
+                        return False, "未收到新的验证码"
+                    tried_codes.add(otp_code)
+
+                if not otp_verified:
+                    return False, "验证码失败: 多次尝试仍无效"
                 continue
 
             if self._state_is_about_you(state):

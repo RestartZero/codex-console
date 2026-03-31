@@ -31,13 +31,15 @@ class EmailServiceAdapter:
         exclude = set(exclude_codes or [])
         exclude.update(self._used_codes)
         deadline = time.time() + max(1, int(timeout))
+        sent_at = otp_sent_at or time.time()
+
         while time.time() < deadline:
             remaining = max(1, int(deadline - time.time()))
             code = self.es.get_verification_code(
                 email=email,
                 email_id=self.email_id,
                 timeout=remaining,
-                otp_sent_at=otp_sent_at,
+                otp_sent_at=sent_at,
             )
             if not code:
                 return None
